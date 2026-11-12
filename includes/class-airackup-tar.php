@@ -121,7 +121,22 @@ class Airackup_Tar {
                 break;
             }
 
-            $target_file = $destination_dir . '/' . ltrim($header['filename'], '/');
+            // Security: Validate archive path against traversal, null bytes, drive letters, and symlinks
+            $is_allowed_type = ($header['type'] === '0' || $header['type'] === "\0" || $header['type'] === '' || $header['type'] === '5');
+            $safe_rel_path = self::sanitize_archive_path($header['filename']);
+
+            if (!$is_allowed_type || $safe_rel_path === false) {
+                // Safely skip entry payload + padding without writing to disk
+                if ($header['type'] !== '5' && $header['size'] > 0) {
+                    $pad = $header['size'] % 512;
+                    $skip_bytes = $header['size'] + ($pad > 0 ? (512 - $pad) : 0);
+                    fseek($handle, $skip_bytes, SEEK_CUR);
+                }
+                continue;
+            }
+
+            $base_dest = rtrim(str_replace('\\', '/', $destination_dir), '/');
+            $target_file = $base_dest . '/' . $safe_rel_path;
             $target_dir = dirname($target_file);
             if (!is_dir($target_dir)) {
                 if (function_exists('wp_mkdir_p')) {
@@ -130,6 +145,18 @@ class Airackup_Tar {
                     // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir
                     @mkdir($target_dir, 0755, true);
                 }
+            }
+
+            // Confine extraction strictly inside destination_dir
+            $real_base = realpath($base_dest);
+            $real_target_dir = realpath($target_dir);
+            if ($real_base === false || $real_target_dir === false || strpos(str_replace('\\', '/', $real_target_dir) . '/', str_replace('\\', '/', $real_base) . '/') !== 0) {
+                if ($header['type'] !== '5' && $header['size'] > 0) {
+                    $pad = $header['size'] % 512;
+                    $skip_bytes = $header['size'] + ($pad > 0 ? (512 - $pad) : 0);
+                    fseek($handle, $skip_bytes, SEEK_CUR);
+                }
+                continue;
             }
 
             if ($header['type'] === '5') {
@@ -249,5 +276,26 @@ class Airackup_Tar {
             'size'     => $size,
             'type'     => $type
         );
+    }
+
+    public static function sanitize_archive_path($path) {
+        if (!is_string($path) || $path === '' || strpos($path, "\0") !== false) {
+            return false;
+        }
+        $normalized = str_replace('\\', '/', $path);
+        if (strpos($normalized, '/') === 0 || preg_match('/^[a-zA-Z]:/', $normalized)) {
+            return false;
+        }
+        $normalized = trim($normalized, '/');
+        if ($normalized === '') {
+            return false;
+        }
+        $parts = explode('/', $normalized);
+        foreach ($parts as $part) {
+            if ($part === '' || $part === '.' || $part === '..') {
+                return false;
+            }
+        }
+        return implode('/', $parts);
     }
 }

@@ -406,7 +406,8 @@
                     redirect_uri: redirectUri,
                     scope: 'https://www.googleapis.com/auth/drive.file',
                     access_type: 'offline',
-                    prompt: 'consent'
+                    prompt: 'consent',
+                    state: airackup_vars.oauth_nonce
                 });
                 window.location.href = authUrl;
             }).fail(function() {

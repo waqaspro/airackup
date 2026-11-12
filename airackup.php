@@ -40,7 +40,7 @@ add_action('plugins_loaded', function() {
 
 // Handle 1-Click Cloud OAuth Returns
 add_action('admin_init', function() {
-    if (!current_user_can('manage_options')) return;
+    if (!current_user_can(Airackup_Security::get_required_capability())) return;
 
     if (isset($_GET['page']) && sanitize_key(wp_unslash($_GET['page'])) === 'airackup') {
         // Disconnect actions
@@ -58,6 +58,7 @@ add_action('admin_init', function() {
 
         // Relay Broker direct token return
         if (isset($_GET['auth']) && (isset($_GET['refresh_token']) || isset($_GET['access_token']))) {
+            check_admin_referer('airackup_oauth_callback');
             $provider = sanitize_text_field(wp_unslash($_GET['auth']));
             $settings = get_option('airackup_settings', array());
 
@@ -81,6 +82,11 @@ add_action('admin_init', function() {
 
         // OAuth code exchange
         if (isset($_GET['auth']) && isset($_GET['code'])) {
+            $oauth_nonce = isset($_GET['_wpnonce']) ? sanitize_text_field(wp_unslash($_GET['_wpnonce'])) : (isset($_GET['state']) ? sanitize_text_field(wp_unslash($_GET['state'])) : '');
+            if (empty($oauth_nonce) || !wp_verify_nonce($oauth_nonce, 'airackup_oauth_callback')) {
+                wp_die(esc_html__('Security verification failed for OAuth callback.', 'airackup'), 403);
+            }
+
             $provider = sanitize_text_field(wp_unslash($_GET['auth']));
             $code = sanitize_text_field(wp_unslash($_GET['code']));
             $settings = get_option('airackup_settings', array());
@@ -107,8 +113,8 @@ add_action('admin_init', function() {
 
 // Authenticated Secure File Download Handler (Bypasses Mixed-Content & .htaccess blocks)
 add_action('admin_post_airackup_download_backup', function() {
-    if (!current_user_can('manage_options')) {
-        wp_die(esc_html__('Unauthorized access. Administrator privileges required.', 'airackup'), 403);
+    if (!current_user_can(Airackup_Security::get_required_capability())) {
+        wp_die(esc_html__('Unauthorized access. Insufficient privileges.', 'airackup'), 403);
     }
 
     $filename = isset($_GET['file']) ? sanitize_file_name(wp_unslash($_GET['file'])) : '';
@@ -157,17 +163,21 @@ add_action('admin_post_airackup_download_backup', function() {
 });
 
 // Admin menu registration
-add_action('admin_menu', function() {
+function airackup_register_admin_menu() {
     add_menu_page(
         'Airackup',
         'Airackup',
-        'manage_options',
+        Airackup_Security::get_required_capability(),
         'airackup',
         'airackup_render_admin_page',
         'dashicons-cloud-saved',
         75
     );
-});
+}
+add_action('admin_menu', 'airackup_register_admin_menu');
+if (function_exists('is_multisite') && is_multisite()) {
+    add_action('network_admin_menu', 'airackup_register_admin_menu');
+}
 
 // Enqueue styles and scripts
 add_action('admin_enqueue_scripts', function($hook) {
@@ -181,9 +191,10 @@ add_action('admin_enqueue_scripts', function($hook) {
     wp_enqueue_script('airackup-admin-js', AIRACKUP_URL . 'assets/js/airackup-admin.js', array('jquery'), AIRACKUP_VERSION, true);
 
     wp_localize_script('airackup-admin-js', 'airackup_vars', array(
-        'ajax_url' => admin_url('admin-ajax.php'),
-        'nonce'    => wp_create_nonce('airackup_admin_nonce'),
-        'site_url' => get_option('siteurl')
+        'ajax_url'    => admin_url('admin-ajax.php'),
+        'nonce'       => wp_create_nonce('airackup_admin_nonce'),
+        'oauth_nonce' => wp_create_nonce('airackup_oauth_callback'),
+        'site_url'    => get_option('siteurl')
     ));
 });
 

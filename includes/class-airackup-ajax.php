@@ -54,7 +54,7 @@ class Airackup_Ajax {
         check_ajax_referer('airackup_admin_nonce', 'nonce');
         Airackup_Security::check_admin_permissions();
 
-        $session_id = isset($_POST['session_id']) ? sanitize_text_field(wp_unslash($_POST['session_id'])) : '';
+        $session_id = isset($_POST['session_id']) ? Airackup_Security::sanitize_id(wp_unslash($_POST['session_id'])) : '';
         $token = isset($_POST['token']) ? sanitize_text_field(wp_unslash($_POST['token'])) : '';
 
         if (!Airackup_Security::verify_token($session_id, $token)) {
@@ -128,7 +128,7 @@ class Airackup_Ajax {
             if (empty($state['file_list'])) {
                 // Initialize file list
                 $base_dir = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
-                $snapshot = Airackup_Incremental::build_snapshot($base_dir, array('uploads/airackup-vault'));
+                $snapshot = Airackup_Incremental::build_snapshot($base_dir, array('uploads/airackup', 'uploads/airackup-vault'));
                 $state['file_list'] = array_keys($snapshot);
                 $state['total_files'] = count($state['file_list']);
                 $state['file_cursor'] = 0;
@@ -201,24 +201,33 @@ class Airackup_Ajax {
         check_ajax_referer('airackup_admin_nonce', 'nonce');
         Airackup_Security::check_admin_permissions();
 
-        $upload_id = isset($_POST['upload_id']) ? sanitize_text_field(wp_unslash($_POST['upload_id'])) : '';
+        $upload_id = isset($_POST['upload_id']) ? Airackup_Security::sanitize_id(wp_unslash($_POST['upload_id'])) : '';
         $chunk_index = isset($_POST['chunk_index']) ? absint(wp_unslash($_POST['chunk_index'])) : 0;
         $total_chunks = isset($_POST['total_chunks']) ? absint(wp_unslash($_POST['total_chunks'])) : 1;
-        $filename = isset($_POST['filename']) ? sanitize_file_name(wp_unslash($_POST['filename'])) : 'backup.airakup';
+        $raw_filename = isset($_POST['filename']) ? sanitize_file_name(wp_unslash($_POST['filename'])) : 'backup.airakup';
+        $filename = basename($raw_filename);
+        $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
 
-        if (empty($_FILES['chunk_data']) || !isset($_FILES['chunk_data']['tmp_name']) || empty($upload_id)) {
-            wp_send_json_error(array('message' => 'Missing chunk data or upload ID'), 400);
+        if (empty($upload_id) || strlen($upload_id) < 4 || strlen($upload_id) > 64) {
+            wp_send_json_error(array('message' => 'Invalid upload ID.'), 400);
+        }
+
+        if (!in_array($ext, array('airakup', 'airackup', 'tar'), true)) {
+            wp_send_json_error(array('message' => 'Invalid file type. Only backup archive files are permitted.'), 400);
+        }
+
+        if (empty($_FILES['chunk_data']) || !isset($_FILES['chunk_data']['tmp_name'])) {
+            wp_send_json_error(array('message' => 'Missing chunk data.'), 400);
         }
 
         $staging_dir = Airackup_Security::get_vault_path('restore-staging/' . $upload_id);
-        if (!is_dir($staging_dir)) {
-            wp_mkdir_p($staging_dir);
-        }
+        Airackup_Security::protect_directory($staging_dir);
 
         $dest_file = $staging_dir . '/' . $filename;
-        $chunk_tmp = sanitize_text_field(wp_unslash($_FILES['chunk_data']['tmp_name']));
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+        $chunk_tmp = $_FILES['chunk_data']['tmp_name'];
 
-        if (file_exists($chunk_tmp)) {
+        if (is_string($chunk_tmp) && file_exists($chunk_tmp) && is_uploaded_file($chunk_tmp)) {
             $chunk_content = file_get_contents($chunk_tmp);
             if ($chunk_content !== false) {
                 file_put_contents($dest_file, $chunk_content, FILE_APPEND | LOCK_EX);
@@ -236,10 +245,16 @@ class Airackup_Ajax {
         check_ajax_referer('airackup_admin_nonce', 'nonce');
         Airackup_Security::check_admin_permissions();
 
-        $backup_file = isset($_POST['backup_file']) ? sanitize_file_name(wp_unslash($_POST['backup_file'])) : '';
-        $upload_id = isset($_POST['upload_id']) ? sanitize_text_field(wp_unslash($_POST['upload_id'])) : '';
+        $raw_backup_file = isset($_POST['backup_file']) ? sanitize_file_name(wp_unslash($_POST['backup_file'])) : '';
+        $backup_file = basename($raw_backup_file);
+        $upload_id = isset($_POST['upload_id']) ? Airackup_Security::sanitize_id(wp_unslash($_POST['upload_id'])) : '';
         $search_url = isset($_POST['search_url']) ? esc_url_raw(wp_unslash($_POST['search_url'])) : '';
         $replace_url = isset($_POST['replace_url']) ? esc_url_raw(wp_unslash($_POST['replace_url'])) : get_option('siteurl');
+
+        $ext = strtolower(pathinfo($backup_file, PATHINFO_EXTENSION));
+        if (!empty($backup_file) && !in_array($ext, array('airakup', 'airackup', 'tar'), true)) {
+            wp_send_json_error(array('message' => 'Invalid backup archive filename.'), 400);
+        }
 
         $session = Airackup_State::create_session('restore', array(
             'backup_file' => $backup_file,
@@ -286,7 +301,7 @@ class Airackup_Ajax {
         check_ajax_referer('airackup_admin_nonce', 'nonce');
         Airackup_Security::check_admin_permissions();
 
-        $session_id = isset($_POST['session_id']) ? sanitize_text_field(wp_unslash($_POST['session_id'])) : '';
+        $session_id = isset($_POST['session_id']) ? Airackup_Security::sanitize_id(wp_unslash($_POST['session_id'])) : '';
         $token = isset($_POST['token']) ? sanitize_text_field(wp_unslash($_POST['token'])) : '';
 
         if (!Airackup_Security::verify_token($session_id, $token)) {
@@ -299,7 +314,7 @@ class Airackup_Ajax {
         }
 
         $staging_dir = Airackup_Security::get_vault_path('restore-staging/' . $session_id);
-        if (!is_dir($staging_dir)) wp_mkdir_p($staging_dir);
+        Airackup_Security::protect_directory($staging_dir);
 
         // Phase 1: Extracting
         if ($state['phase'] === 'extracting') {
@@ -437,7 +452,7 @@ class Airackup_Ajax {
             }
 
             // 2. Clear Elementor CSS cache files if present
-            $elementor_css = (defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content') . '/uploads/elementor/css';
+            $elementor_css = Airackup_Security::get_upload_basedir() . '/elementor/css';
             if (is_dir($elementor_css)) {
                 self::delete_directory_contents($elementor_css);
             }
@@ -544,7 +559,7 @@ class Airackup_Ajax {
             $rel_norm = str_replace('\\', '/', $rel);
 
             // Never overwrite active airackup plugin or vault files during live restore
-            if (strpos($rel_norm, 'plugins/airackup') === 0 || strpos($rel_norm, 'uploads/airackup-vault') === 0) {
+            if (strpos($rel_norm, 'plugins/airackup') === 0 || strpos($rel_norm, 'uploads/airackup') === 0) {
                 continue;
             }
 

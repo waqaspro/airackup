@@ -18,6 +18,7 @@ $airackup_dropbox_status  = $airackup_dropbox_storage->test_connection();
 
 $airackup_gdrive_auth_url  = $airackup_gdrive_storage->get_auth_url(admin_url('admin.php?page=airackup&auth=gdrive'));
 $airackup_dropbox_auth_url = $airackup_dropbox_storage->get_auth_url(admin_url('admin.php?page=airackup&auth=dropbox'));
+$airackup_oauth_return_url = wp_nonce_url(admin_url('admin.php'), 'airackup_oauth_callback');
 ?>
 <div class="airackup-card">
     <div class="airackup-card-header">
@@ -70,7 +71,7 @@ $airackup_dropbox_auth_url = $airackup_dropbox_storage->get_auth_url(admin_url('
             </p>
 
             <div style="margin-bottom:16px;">
-                <a href="<?php echo esc_url(AIRACKUP_AUTH_RELAY_URL . '/auth/google?site_url=' . rawurlencode(admin_url('admin.php'))); ?>" class="airackup-btn airackup-btn-primary" style="background:#4285F4; border-color:#4285F4; padding:10px 22px; font-size:14px; font-weight:600; display:inline-flex; align-items:center; gap:8px; text-decoration:none;">
+                <a href="<?php echo esc_url(AIRACKUP_AUTH_RELAY_URL . '/auth/google?site_url=' . rawurlencode($airackup_oauth_return_url)); ?>" class="airackup-btn airackup-btn-primary" style="background:#4285F4; border-color:#4285F4; padding:10px 22px; font-size:14px; font-weight:600; display:inline-flex; align-items:center; gap:8px; text-decoration:none;">
                     <span class="dashicons dashicons-google" style="font-size:18px; width:18px; height:18px; line-height:18px;"></span> Sign in with Google (1-Click Connect)
                 </a>
             </div>
@@ -159,7 +160,7 @@ $airackup_dropbox_auth_url = $airackup_dropbox_storage->get_auth_url(admin_url('
             </p>
 
             <div style="margin-bottom:16px;">
-                <a href="<?php echo esc_url(AIRACKUP_AUTH_RELAY_URL . '/auth/dropbox?site_url=' . rawurlencode(admin_url('admin.php'))); ?>" class="airackup-btn airackup-btn-primary" style="background:#0061FE; border-color:#0061FE; padding:10px 22px; font-size:14px; font-weight:600; display:inline-flex; align-items:center; gap:8px; text-decoration:none;">
+                <a href="<?php echo esc_url(AIRACKUP_AUTH_RELAY_URL . '/auth/dropbox?site_url=' . rawurlencode($airackup_oauth_return_url)); ?>" class="airackup-btn airackup-btn-primary" style="background:#0061FE; border-color:#0061FE; padding:10px 22px; font-size:14px; font-weight:600; display:inline-flex; align-items:center; gap:8px; text-decoration:none;">
                     <span class="dashicons dashicons-portfolio" style="font-size:18px; width:18px; height:18px; line-height:18px;"></span> Connect with Dropbox (1-Click)
                 </a>
             </div>

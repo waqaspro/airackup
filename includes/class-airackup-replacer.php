@@ -89,7 +89,7 @@ class Airackup_Replacer {
         if (is_string($data)) {
             // Check if serialized
             if (self::is_serialized($data)) {
-                $unserialized = @unserialize($data);
+                $unserialized = @unserialize($data, array('allowed_classes' => false));
                 if ($unserialized !== false || $data === 'b:0;') {
                     $replaced_unserialized = self::replace($unserialized, $search, $replace);
                     return serialize($replaced_unserialized);
@@ -116,9 +116,12 @@ class Airackup_Replacer {
         }
 
         if (is_object($data)) {
-            $class_name = get_class($data);
-            $new_object = new $class_name();
+            // Mutate cloned object or __PHP_Incomplete_Class safely without invoking constructors
+            $new_object = clone $data;
             foreach ($data as $prop => $val) {
+                if ($prop === '__PHP_Incomplete_Class_Name') {
+                    continue;
+                }
                 $new_object->$prop = self::replace($val, $search, $replace);
             }
             return $new_object;
