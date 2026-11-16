@@ -27,7 +27,13 @@ class Airackup_Tar {
     }
 
     public static function append_file($handle, $source_file, $tar_path) {
+        $dummy_offset = 0;
+        return self::append_file_chunked($handle, $source_file, $tar_path, 0, PHP_INT_MAX, $dummy_offset);
+    }
+
+    public static function append_file_chunked($handle, $source_file, $tar_path, $start_time = 0, $time_budget = 4.0, &$file_offset = 0) {
         if (!is_file($source_file) || !is_readable($source_file)) {
+            $file_offset = 0;
             return false;
         }
 
@@ -35,32 +41,67 @@ class Airackup_Tar {
         $mtime = filemtime($source_file);
         $tar_path = str_replace('\\', '/', $tar_path);
 
-        $header = self::build_header($tar_path, $size, $mtime);
-        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
-        fwrite($handle, $header);
+        // If starting from byte 0, write TAR 512-byte POSIX ustar header
+        if ($file_offset === 0) {
+            $header = self::build_header($tar_path, $size, $mtime);
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+            fwrite($handle, $header);
+        }
+
+        // Handle empty 0-byte file immediately
+        if ($size === 0) {
+            $file_offset = 0;
+            return true;
+        }
 
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
         $src = fopen($source_file, 'rb');
-        if ($src) {
-            while (!feof($src)) {
-                // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread
-                $buffer = fread($src, 65536); // 64KB buffer
-                if ($buffer !== false && strlen($buffer) > 0) {
-                    // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
-                    fwrite($handle, $buffer);
-                }
-            }
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-            fclose($src);
+        if (!$src) {
+            $file_offset = 0;
+            return false;
         }
 
-        // Pad to 512-byte boundary
+        if ($file_offset > 0) {
+            fseek($src, $file_offset);
+        }
+
+        $interrupted = false;
+
+        // Stream file in 64KB chunks while checking execution time budget on every chunk
+        while (!feof($src) && $file_offset < $size) {
+            $bytes_to_read = min(65536, $size - $file_offset);
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread
+            $buffer = fread($src, $bytes_to_read);
+            if ($buffer === false || strlen($buffer) === 0) {
+                break;
+            }
+
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+            fwrite($handle, $buffer);
+            $file_offset += strlen($buffer);
+
+            if ($start_time > 0 && $file_offset < $size && (microtime(true) - $start_time) >= $time_budget) {
+                $interrupted = true;
+                break;
+            }
+        }
+
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+        fclose($src);
+
+        if ($interrupted && $file_offset < $size) {
+            // Execution budget reached mid-file; yield to AJAX runner to resume in the next request
+            return false;
+        }
+
+        // File write complete: pad to POSIX 512-byte boundary
         $remainder = $size % 512;
         if ($remainder > 0) {
             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
             fwrite($handle, str_repeat("\0", 512 - $remainder));
         }
 
+        $file_offset = 0;
         return true;
     }
 
@@ -137,6 +178,15 @@ class Airackup_Tar {
 
             $base_dest = rtrim(str_replace('\\', '/', $destination_dir), '/');
             $target_file = $base_dest . '/' . $safe_rel_path;
+
+            // Security: If extracting an executable file (PHP, PHTML, PHAR, INC, etc.) in staging,
+            // append .airackup_quarantine so it can never be executed directly on Nginx or any web server.
+            if ($header['type'] !== '5') {
+                if (preg_match('/\.(php[0-9]*|phtml|phar|inc|cgi|pl|py|sh)$/i', $safe_rel_path)) {
+                    $target_file .= '.airackup_quarantine';
+                }
+            }
+
             $target_dir = dirname($target_file);
             if (!is_dir($target_dir)) {
                 if (function_exists('wp_mkdir_p')) {

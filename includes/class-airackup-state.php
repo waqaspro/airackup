@@ -8,7 +8,7 @@ if (!defined('ABSPATH')) exit;
 class Airackup_State {
 
     public static function create_session($action_type = 'backup', $options = array()) {
-        $rand = function_exists('wp_generate_password') ? wp_generate_password(8, false, false) : substr(bin2hex(random_bytes(6)), 0, 8);
+        $rand = function_exists('wp_generate_password') ? wp_generate_password(32, false, false) : bin2hex(random_bytes(16));
         $session_id = Airackup_Security::sanitize_id($action_type . '_' . gmdate('Ymd_His') . '_' . $rand);
         $token = Airackup_Security::generate_token($session_id);
 
@@ -46,20 +46,41 @@ class Airackup_State {
 
         if (function_exists('get_transient')) {
             $state = get_transient('airackup_state_' . $session_id);
-            return is_array($state) ? $state : null;
+            if (is_array($state)) {
+                return $state;
+            }
         }
 
         $file = self::get_state_file_path($session_id);
-        if (!file_exists($file)) {
-            return null;
+        if (file_exists($file)) {
+            $raw = file_get_contents($file);
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
         }
-        $raw = file_get_contents($file);
-        $prefix = "<?php exit; ?>\n";
-        if (strpos($raw, $prefix) === 0) {
-            $raw = substr($raw, strlen($prefix));
+
+        // Migration fallback for any legacy state file
+        $legacy_file = Airackup_Security::get_vault_path('tmp/' . $session_id . '/state.php');
+        if (file_exists($legacy_file)) {
+            $raw = file_get_contents($legacy_file);
+            $prefix = "<?php exit; ?>\n";
+            if (strpos($raw, $prefix) === 0) {
+                $raw = substr($raw, strlen($prefix));
+            }
+            if (function_exists('wp_delete_file')) {
+                wp_delete_file($legacy_file);
+            } else {
+                @unlink($legacy_file);
+            }
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                self::save_state_data($session_id, $decoded);
+                return $decoded;
+            }
         }
-        $decoded = json_decode($raw, true);
-        return is_array($decoded) ? $decoded : null;
+
+        return null;
     }
 
     public static function update_state($session_id, $data) {
@@ -96,7 +117,7 @@ class Airackup_State {
     }
 
     private static function get_state_file_path($session_id) {
-        return Airackup_Security::get_vault_path('tmp/' . $session_id . '/state.php');
+        return Airackup_Security::get_vault_path('tmp/' . $session_id . '/state.json');
     }
 
     private static function save_state_data($session_id, $state) {
@@ -107,7 +128,7 @@ class Airackup_State {
         }
 
         $file = self::get_state_file_path($session_id);
-        $payload = "<?php exit; ?>\n" . json_encode($state, JSON_PRETTY_PRINT);
+        $payload = function_exists('wp_json_encode') ? wp_json_encode($state, JSON_PRETTY_PRINT) : json_encode($state, JSON_PRETTY_PRINT);
         file_put_contents($file, $payload, LOCK_EX);
     }
 

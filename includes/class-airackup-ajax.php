@@ -137,16 +137,24 @@ class Airackup_Ajax {
             $files = $state['file_list'];
             $cursor = $state['file_cursor'];
             $base_dir = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : ABSPATH . 'wp-content';
+            $active_offset = isset($state['active_file_offset']) ? absint($state['active_file_offset']) : 0;
 
             while ($cursor < count($files)) {
                 if ((microtime(true) - $start_time) >= $time_budget) break;
 
                 $rel_file = $files[$cursor];
                 $abs_file = $base_dir . '/' . $rel_file;
-                Airackup_Tar::append_file($tar_handle, $abs_file, 'wp-content/' . $rel_file);
+                
+                // Stream large files in time-bounded chunks so execution limits are never exceeded
+                $done = Airackup_Tar::append_file_chunked($tar_handle, $abs_file, 'wp-content/' . $rel_file, $start_time, $time_budget, $active_offset);
+                if (!$done) {
+                    // Time budget exhausted while streaming this file; pause and resume in next request
+                    break;
+                }
                 $cursor++;
             }
 
+            $state['active_file_offset'] = $active_offset;
             $state['file_cursor'] = $cursor;
             $file_pct = round(30 + (60 * ($cursor / max(1, count($files)))));
             $state['percent'] = $file_pct;
@@ -220,10 +228,12 @@ class Airackup_Ajax {
             wp_send_json_error(array('message' => 'Missing chunk data.'), 400);
         }
 
-        $staging_dir = Airackup_Security::get_vault_path('restore-staging/' . $upload_id);
+        // Generate unguessable staging path using server-side HMAC salt
+        $staging_dir = Airackup_Security::get_upload_staging_path($upload_id);
         Airackup_Security::protect_directory($staging_dir);
 
-        $dest_file = $staging_dir . '/' . $filename;
+        // Store upload chunks under safe temporary extension (.airackup_tmp) to avoid public archive serving
+        $dest_file = $staging_dir . '/archive.airackup_tmp';
         // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
         $chunk_tmp = $_FILES['chunk_data']['tmp_name'];
 
@@ -256,17 +266,30 @@ class Airackup_Ajax {
             wp_send_json_error(array('message' => 'Invalid backup archive filename.'), 400);
         }
 
+        $upload_staging_dir = !empty($upload_id) ? Airackup_Security::get_upload_staging_path($upload_id) : '';
+
         $session = Airackup_State::create_session('restore', array(
-            'backup_file' => $backup_file,
-            'upload_id'   => $upload_id,
-            'search_url'  => $search_url,
-            'replace_url' => $replace_url
+            'backup_file'        => $backup_file,
+            'upload_id'          => $upload_id,
+            'upload_staging_dir' => $upload_staging_dir,
+            'search_url'         => $search_url,
+            'replace_url'        => $replace_url
         ));
 
         // Locate archive
         $archive_path = '';
         if (!empty($upload_id)) {
-            $archive_path = Airackup_Security::get_vault_path('restore-staging/' . $upload_id . '/' . $backup_file);
+            if (!empty($upload_staging_dir) && file_exists($upload_staging_dir . '/archive.airackup_tmp')) {
+                $archive_path = $upload_staging_dir . '/archive.airackup_tmp';
+            } elseif (!empty($upload_staging_dir) && !empty($backup_file) && file_exists($upload_staging_dir . '/' . $backup_file)) {
+                $archive_path = $upload_staging_dir . '/' . $backup_file;
+            } else {
+                // Legacy un-hashed path fallback
+                $legacy_staging = Airackup_Security::get_vault_path('restore-staging/' . $upload_id . '/' . $backup_file);
+                if (file_exists($legacy_staging)) {
+                    $archive_path = $legacy_staging;
+                }
+            }
         } else {
             $archive_path = Airackup_Security::get_vault_path('backups/' . $backup_file);
         }
@@ -287,11 +310,13 @@ class Airackup_Ajax {
         }
 
         Airackup_State::update_state($session['session_id'], array(
-            'phase'        => 'extracting',
-            'archive_path' => $archive_path,
-            'percent'      => 10,
-            'cursor'       => 0,
-            'current_step' => 'Unpacking archive...'
+            'phase'              => 'extracting',
+            'archive_path'       => $archive_path,
+            'upload_staging_dir' => $upload_staging_dir,
+            'upload_id'          => $upload_id,
+            'percent'            => 10,
+            'cursor'             => 0,
+            'current_step'       => 'Unpacking archive...'
         ));
 
         wp_send_json_success($session);
@@ -467,9 +492,19 @@ class Airackup_Ajax {
 
             // 4. Clean staging files completely so vault never grows in size
             self::delete_directory_contents($staging_dir);
-            if (!empty($state['upload_id'])) {
-                $upload_staging = Airackup_Security::get_vault_path('restore-staging/' . $state['upload_id']);
-                self::delete_directory_contents($upload_staging);
+            if (!empty($state['upload_staging_dir']) && is_dir($state['upload_staging_dir'])) {
+                self::delete_directory_contents($state['upload_staging_dir']);
+            }
+            $target_upl_id = !empty($state['upload_id']) ? $state['upload_id'] : (!empty($state['options']['upload_id']) ? $state['options']['upload_id'] : '');
+            if (!empty($target_upl_id)) {
+                $hashed_staging = Airackup_Security::get_upload_staging_path($target_upl_id);
+                if (is_dir($hashed_staging)) {
+                    self::delete_directory_contents($hashed_staging);
+                }
+                $legacy_staging = Airackup_Security::get_vault_path('restore-staging/' . $target_upl_id);
+                if (is_dir($legacy_staging)) {
+                    self::delete_directory_contents($legacy_staging);
+                }
             }
             Airackup_State::delete_session($session_id);
 
@@ -547,6 +582,10 @@ class Airackup_Ajax {
     private static function deploy_directory_tree($source_dir, $target_dir) {
         if (!is_dir($source_dir)) return;
 
+        $real_target_root = realpath($target_dir);
+        if ($real_target_root === false) return;
+        $real_target_root = rtrim(str_replace('\\', '/', $real_target_root), '/');
+
         $iterator = new RecursiveIteratorIterator(
             new RecursiveDirectoryIterator($source_dir, RecursiveDirectoryIterator::SKIP_DOTS),
             RecursiveIteratorIterator::SELF_FIRST
@@ -555,26 +594,73 @@ class Airackup_Ajax {
         $src_len = strlen(rtrim($source_dir, '/\\')) + 1;
 
         foreach ($iterator as $item) {
-            $rel = substr($item->getPathname(), $src_len);
+            $src_path = $item->getPathname();
+            // Block symlinks in source archive staging
+            if (is_link($src_path)) {
+                continue;
+            }
+
+            $rel = substr($src_path, $src_len);
             $rel_norm = str_replace('\\', '/', $rel);
+
+            // Strip .airackup_quarantine suffix when deploying back into live target
+            if (preg_match('/^(.*?)\.airackup_quarantine$/i', $rel_norm, $m)) {
+                $rel_norm = $m[1];
+            }
 
             // Never overwrite active airackup plugin or vault files during live restore
             if (strpos($rel_norm, 'plugins/airackup') === 0 || strpos($rel_norm, 'uploads/airackup') === 0) {
                 continue;
             }
 
-            $dest = $target_dir . '/' . $rel;
+            $dest = $target_dir . '/' . $rel_norm;
+
+            // Remove existing symlink at destination if present to prevent traversal overwrite
+            if (is_link($dest)) {
+                if (function_exists('wp_delete_file')) {
+                    wp_delete_file($dest);
+                } else {
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+                    @unlink($dest);
+                }
+            }
 
             if ($item->isDir()) {
                 if (!is_dir($dest)) {
-                    wp_mkdir_p($dest);
+                    if (function_exists('wp_mkdir_p')) {
+                        wp_mkdir_p($dest);
+                    } else {
+                        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir
+                        @mkdir($dest, 0755, true);
+                    }
                 }
             } else {
                 $parent = dirname($dest);
                 if (!is_dir($parent)) {
-                    wp_mkdir_p($parent);
+                    if (function_exists('wp_mkdir_p')) {
+                        wp_mkdir_p($parent);
+                    } else {
+                        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir
+                        @mkdir($parent, 0755, true);
+                    }
                 }
-                copy($item->getPathname(), $dest);
+
+                // Canonical path security check: verify destination parent is strictly within target root
+                $real_parent = realpath($parent);
+                if ($real_parent === false) {
+                    continue;
+                }
+                $real_parent = rtrim(str_replace('\\', '/', $real_parent), '/');
+
+                if (strpos($real_parent . '/', $real_target_root . '/') !== 0) {
+                    // Target resolves outside allowed root! Skip for security
+                    continue;
+                }
+
+                // Double check destination is not a symlink right before copy
+                if (!is_link($dest)) {
+                    copy($src_path, $dest);
+                }
             }
         }
     }

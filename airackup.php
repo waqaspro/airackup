@@ -132,6 +132,12 @@ add_action('admin_post_airackup_download_backup', function() {
             $filepath = $base . '.airackup';
         } elseif (file_exists($base . '.tar')) {
             $filepath = $base . '.tar';
+        } else {
+            // Check legacy un-salted directory
+            $legacy_base = Airackup_Security::get_upload_basedir() . '/airackup/backups/' . basename($filename);
+            if (file_exists($legacy_base)) {
+                $filepath = $legacy_base;
+            }
         }
     }
 

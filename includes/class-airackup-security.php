@@ -17,12 +17,42 @@ class Airackup_Security {
         return defined('WP_CONTENT_DIR') ? rtrim(str_replace('\\', '/', WP_CONTENT_DIR), '/') . '/uploads' : sys_get_temp_dir();
     }
 
+    public static function get_vault_secret() {
+        if (function_exists('get_option')) {
+            $secret = get_option('airackup_vault_secret');
+            if (empty($secret) || strlen($secret) < 32) {
+                if (function_exists('wp_generate_password')) {
+                    $secret = wp_generate_password(48, false, false);
+                } else {
+                    $secret = bin2hex(random_bytes(24));
+                }
+                if (function_exists('update_option')) {
+                    update_option('airackup_vault_secret', $secret, true);
+                }
+            }
+            return $secret;
+        }
+        // Fallback for standalone test suites without active WordPress database
+        static $test_secret = null;
+        if ($test_secret === null) {
+            $test_secret = 'airackup_test_vault_secret_token_standalone_48_chars';
+        }
+        return $test_secret;
+    }
+
     public static function get_vault_path($sub = '') {
-        $vault = self::get_upload_basedir() . '/airackup';
+        $secret = self::get_vault_secret();
+        $vault = self::get_upload_basedir() . '/airackup/' . $secret;
         if ($sub) {
             $vault .= '/' . ltrim($sub, '/\\');
         }
         return $vault;
+    }
+
+    public static function get_upload_staging_path($upload_id) {
+        $salt = self::get_vault_secret();
+        $safe_hash = hash_hmac('sha256', (string) $upload_id, $salt);
+        return self::get_vault_path('restore-staging/upl_' . $safe_hash);
     }
 
     public static function protect_directory($dir) {
@@ -59,6 +89,10 @@ class Airackup_Security {
     }
 
     public static function init_vault_directory($custom_path = null) {
+        // Protect parent wrapper airackup directory
+        $parent_dir = self::get_upload_basedir() . '/airackup';
+        self::protect_directory($parent_dir);
+
         $path = $custom_path ?: self::get_vault_path();
         self::protect_directory($path);
 
@@ -66,6 +100,19 @@ class Airackup_Security {
         $subdirs = array('backups', 'tmp', 'restore-staging');
         foreach ($subdirs as $subdir) {
             self::protect_directory($path . '/' . $subdir);
+        }
+
+        // Seamless migration: move any legacy backups from un-salted directory to secret directory
+        $legacy_backups = $parent_dir . '/backups';
+        $new_backups = self::get_vault_path('backups');
+        if (is_dir($legacy_backups) && $legacy_backups !== $new_backups) {
+            $legacy_files = glob($legacy_backups . '/*') ?: array();
+            foreach ($legacy_files as $lf) {
+                if (is_file($lf)) {
+                    // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+                    @rename($lf, $new_backups . '/' . basename($lf));
+                }
+            }
         }
 
         return true;
