@@ -54,7 +54,7 @@ class Airackup_Ajax {
         check_ajax_referer('airackup_admin_nonce', 'nonce');
         Airackup_Security::check_admin_permissions();
 
-        $session_id = isset($_POST['session_id']) ? Airackup_Security::sanitize_id(wp_unslash($_POST['session_id'])) : '';
+        $session_id = isset($_POST['session_id']) ? Airackup_Security::sanitize_id(sanitize_text_field(wp_unslash($_POST['session_id']))) : '';
         $token = isset($_POST['token']) ? sanitize_text_field(wp_unslash($_POST['token'])) : '';
 
         if (!Airackup_Security::verify_token($session_id, $token)) {
@@ -209,7 +209,7 @@ class Airackup_Ajax {
         check_ajax_referer('airackup_admin_nonce', 'nonce');
         Airackup_Security::check_admin_permissions();
 
-        $upload_id = isset($_POST['upload_id']) ? Airackup_Security::sanitize_id(wp_unslash($_POST['upload_id'])) : '';
+        $upload_id = isset($_POST['upload_id']) ? Airackup_Security::sanitize_id(sanitize_text_field(wp_unslash($_POST['upload_id']))) : '';
         $chunk_index = isset($_POST['chunk_index']) ? absint(wp_unslash($_POST['chunk_index'])) : 0;
         $total_chunks = isset($_POST['total_chunks']) ? absint(wp_unslash($_POST['total_chunks'])) : 1;
         $raw_filename = isset($_POST['filename']) ? sanitize_file_name(wp_unslash($_POST['filename'])) : 'backup.airakup';
@@ -257,7 +257,7 @@ class Airackup_Ajax {
 
         $raw_backup_file = isset($_POST['backup_file']) ? sanitize_file_name(wp_unslash($_POST['backup_file'])) : '';
         $backup_file = basename($raw_backup_file);
-        $upload_id = isset($_POST['upload_id']) ? Airackup_Security::sanitize_id(wp_unslash($_POST['upload_id'])) : '';
+        $upload_id = isset($_POST['upload_id']) ? Airackup_Security::sanitize_id(sanitize_text_field(wp_unslash($_POST['upload_id']))) : '';
         $search_url = isset($_POST['search_url']) ? esc_url_raw(wp_unslash($_POST['search_url'])) : '';
         $replace_url = isset($_POST['replace_url']) ? esc_url_raw(wp_unslash($_POST['replace_url'])) : get_option('siteurl');
 
@@ -326,7 +326,7 @@ class Airackup_Ajax {
         check_ajax_referer('airackup_admin_nonce', 'nonce');
         Airackup_Security::check_admin_permissions();
 
-        $session_id = isset($_POST['session_id']) ? Airackup_Security::sanitize_id(wp_unslash($_POST['session_id'])) : '';
+        $session_id = isset($_POST['session_id']) ? Airackup_Security::sanitize_id(sanitize_text_field(wp_unslash($_POST['session_id']))) : '';
         $token = isset($_POST['token']) ? sanitize_text_field(wp_unslash($_POST['token'])) : '';
 
         if (!Airackup_Security::verify_token($session_id, $token)) {

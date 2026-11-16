@@ -71,6 +71,7 @@ class Airackup_State {
             if (function_exists('wp_delete_file')) {
                 wp_delete_file($legacy_file);
             } else {
+                // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
                 @unlink($legacy_file);
             }
             $decoded = json_decode($raw, true);
