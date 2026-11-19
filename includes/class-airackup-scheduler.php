@@ -44,10 +44,6 @@ class Airackup_Scheduler {
     }
 
     public static function run_scheduled_backup() {
-        if (function_exists('set_time_limit')) {
-            @set_time_limit(300);
-        }
-
         $settings = function_exists('get_option') ? get_option('airackup_settings', array()) : array();
         $type = isset($settings['backup_type']) ? $settings['backup_type'] : 'full';
 
