@@ -180,9 +180,14 @@ class Airackup_Tar {
             $target_file = $base_dest . '/' . $safe_rel_path;
 
             // Security: If extracting an executable file (PHP, PHTML, PHAR, INC, etc.) in staging,
-            // append .airackup_quarantine so it can never be executed directly on Nginx or any web server.
+            // or any access-control file (.htaccess, web.config, index.php), append .airackup_quarantine
+            // so archive entries can never be executed directly on Nginx nor overwrite staging access control.
             if ($header['type'] !== '5') {
-                if (preg_match('/\.(php[0-9]*|phtml|phar|inc|cgi|pl|py|sh)$/i', $safe_rel_path)) {
+                $entry_basename = strtolower(basename($safe_rel_path));
+                $is_reserved_access = in_array($entry_basename, array('.htaccess', 'web.config', 'index.php'), true);
+                $is_executable = preg_match('/\.(php[0-9]*|phtml|phar|inc|cgi|pl|py|sh)$/i', $safe_rel_path);
+
+                if ($is_reserved_access || $is_executable) {
                     $target_file .= '.airackup_quarantine';
                 }
             }

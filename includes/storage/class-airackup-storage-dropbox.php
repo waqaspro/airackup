@@ -91,14 +91,90 @@ class Airackup_Storage_Dropbox implements Airackup_Storage_Interface {
     }
 
     public function download_file($remote_filename, $local_path) {
-        return true;
+        if (empty($this->access_token)) {
+            return false;
+        }
+
+        $endpoint = 'https://content.dropboxapi.com/2/files/download';
+        if (function_exists('wp_remote_post')) {
+            $res = wp_remote_post($endpoint, array(
+                'headers' => array(
+                    'Authorization'   => 'Bearer ' . $this->access_token,
+                    'Dropbox-API-Arg' => json_encode(array(
+                        'path' => '/' . ltrim($remote_filename, '/')
+                    ))
+                ),
+                'timeout'  => 180,
+                'stream'   => true,
+                'filename' => $local_path
+            ));
+            return (!is_wp_error($res) && wp_remote_retrieve_response_code($res) === 200);
+        }
+        return false;
     }
 
     public function list_backups() {
+        if (empty($this->access_token)) {
+            return array();
+        }
+
+        $endpoint = 'https://api.dropboxapi.com/2/files/list_folder';
+        if (function_exists('wp_remote_post')) {
+            $res = wp_remote_post($endpoint, array(
+                'headers' => array(
+                    'Authorization' => 'Bearer ' . $this->access_token,
+                    'Content-Type'  => 'application/json'
+                ),
+                'body'    => json_encode(array('path' => '')),
+                'timeout' => 20
+            ));
+
+            if (is_wp_error($res) || wp_remote_retrieve_response_code($res) !== 200) {
+                return array();
+            }
+
+            $data = json_decode(wp_remote_retrieve_body($res), true);
+            $backups = array();
+            if (!empty($data['entries']) && is_array($data['entries'])) {
+                foreach ($data['entries'] as $entry) {
+                    if (isset($entry['.tag']) && $entry['.tag'] === 'file') {
+                        $ext = strtolower(pathinfo($entry['name'], PATHINFO_EXTENSION));
+                        if (in_array($ext, array('airakup', 'airackup', 'tar'), true)) {
+                            $backups[] = array(
+                                'filename' => $entry['name'],
+                                'size'     => isset($entry['size']) ? intval($entry['size']) : 0,
+                                'date'     => isset($entry['client_modified']) ? strtotime($entry['client_modified']) : time(),
+                                'storage'  => 'dropbox'
+                            );
+                        }
+                    }
+                }
+            }
+            return $backups;
+        }
+
         return array();
     }
 
     public function delete_backup($remote_filename) {
-        return true;
+        if (empty($this->access_token)) {
+            return false;
+        }
+
+        $endpoint = 'https://api.dropboxapi.com/2/files/delete_v2';
+        if (function_exists('wp_remote_post')) {
+            $res = wp_remote_post($endpoint, array(
+                'headers' => array(
+                    'Authorization' => 'Bearer ' . $this->access_token,
+                    'Content-Type'  => 'application/json'
+                ),
+                'body'    => json_encode(array(
+                    'path' => '/' . ltrim($remote_filename, '/')
+                )),
+                'timeout' => 20
+            ));
+            return (!is_wp_error($res) && wp_remote_retrieve_response_code($res) === 200);
+        }
+        return false;
     }
 }

@@ -56,6 +56,10 @@ class Airackup_Security {
     }
 
     public static function protect_directory($dir) {
+        if (!is_string($dir) || empty($dir)) {
+            return false;
+        }
+
         if (!is_dir($dir)) {
             if (function_exists('wp_mkdir_p')) {
                 wp_mkdir_p($dir);
@@ -89,6 +93,12 @@ class Airackup_Security {
     }
 
     public static function init_vault_directory($custom_path = null) {
+        // When invoked by register_activation_hook, WordPress passes $network_wide (bool true/false).
+        // Ensure $custom_path is strictly a valid string path, preventing network activation from creating directory "1".
+        if (!is_string($custom_path) || empty($custom_path)) {
+            $custom_path = null;
+        }
+
         // Protect parent wrapper airackup directory
         $parent_dir = self::get_upload_basedir() . '/airackup';
         self::protect_directory($parent_dir);
@@ -107,10 +117,15 @@ class Airackup_Security {
         $new_backups = self::get_vault_path('backups');
         if (is_dir($legacy_backups) && $legacy_backups !== $new_backups) {
             $legacy_files = glob($legacy_backups . '/*') ?: array();
+            $allowed_backup_exts = array('airakup', 'airackup', 'tar');
             foreach ($legacy_files as $lf) {
                 if (is_file($lf)) {
-                    // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
-                    @rename($lf, $new_backups . '/' . basename($lf));
+                    $ext = strtolower(pathinfo($lf, PATHINFO_EXTENSION));
+                    // Security: Restrict migration strictly to recognized backup archives (never arbitrary/executable files)
+                    if (in_array($ext, $allowed_backup_exts, true)) {
+                        // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+                        @rename($lf, $new_backups . '/' . basename($lf));
+                    }
                 }
             }
         }

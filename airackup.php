@@ -30,7 +30,9 @@ require_once AIRACKUP_DIR . 'includes/class-airackup-incremental.php';
 require_once AIRACKUP_DIR . 'includes/class-airackup-scheduler.php';
 require_once AIRACKUP_DIR . 'includes/class-airackup-ajax.php';
 
-register_activation_hook(__FILE__, array('Airackup_Security', 'init_vault_directory'));
+register_activation_hook(__FILE__, function($network_wide = false) {
+    Airackup_Security::init_vault_directory();
+});
 
 add_action('plugins_loaded', function() {
     Airackup_Core::get_instance();
